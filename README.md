@@ -3,13 +3,13 @@
 A minimalist, high-throughput, UDP packet processor for Zynq SoCs.
 
 ## I know
-I know I haven't implemented the synthesise step yet so it's sily to call the project like this.
+I know I haven't implemented the synthesise step yet so it's silly to call the project like this.
 **But**, I will (eventually). And when I do, I'll probably have to use an open-source tool I've never touched before because my Vivado laptop is currently on vacation in Spain cosplaying as a home server for my parents (that's on me though). The point is, I fully expect to struggle with that whole part once I get to it, and the name feels appropriate in advance.
 
 ## What is this thing?
 
 Do you want to process network packets at line rate, without the bloat of a full network stack in software?
-Then you should probably go to [taxi](https://github.com/fpganinja/taxi). That's the real deal, with a whole suite of professional-grade networking cores..
+Then you should probably go to [taxi](https://github.com/fpganinja/taxi). That's the real deal, with a whole suite of professional-grade networking cores.
 However, if you want to see a super minimalist version of just the Ethernet/IP/UDP parsing part, built from the ground up with all the bugs and learning experiences left in, then this might be for you. This is less of a "reusable IP core" and more of a "learning diary written in Verilog."
 
 ## Where I am right now
