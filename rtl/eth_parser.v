@@ -33,6 +33,7 @@ module eth_parser #(
   reg [1:0]            curr_state, next_state;
   reg [3:0]            byte_counter;
   reg [111:0]          header;
+  reg                  reset_counter;
 
   // SEQUENTIAL LOGIC
   always @(posedge clk) begin
@@ -45,9 +46,9 @@ module eth_parser #(
       if (s_axis_tvalid && (curr_state == S_PARSE_HEADER || (curr_state == S_IDLE && next_state == S_PARSE_HEADER))) begin
         byte_counter <= byte_counter + 1;
         header[111:0] <= {header[111-DATA_WIDTH:0], s_axis_tdata};
-      end else if (s_axis_tvalid == 1'b1 && curr_state == S_STREAM_PAYLOAD) begin
+      end else if (reset_counter) begin
         byte_counter <= 0;
-      end else byte_counter <= 0;
+      end
     end
   end
   
@@ -57,11 +58,13 @@ module eth_parser #(
     case (curr_state)
       S_IDLE: if (s_axis_tvalid == 1'b1) next_state = S_PARSE_HEADER;
       S_PARSE_HEADER: if (byte_counter == HEADER_LEN-1) next_state = S_STREAM_PAYLOAD;
-      S_STREAM_PAYLOAD: if (s_axis_tvalid && s_axis_tlast && s_axis_tready) next_state = S_FINISH
+      S_STREAM_PAYLOAD: if (s_axis_tvalid && s_axis_tlast && s_axis_tready) next_state = S_FINISH;
       S_FINISH: next_state = S_IDLE;
       default: next_state = S_IDLE;
     endcase
   end
+
+  assign reset_counter = (curr_state == S_IDLE) ? 1 : 0;
 
   // ASSIGN OUTPUT VALUES
   assign m_axis_tuser[1:0] = (header[111:64] == TARGET_MAC_ADDR) ? 2'b01 : ((header[111:64] == BROADCAST_MAC_ADDR) ? 2'b10 : 2'b00);

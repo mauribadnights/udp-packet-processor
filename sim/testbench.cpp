@@ -1,94 +1,169 @@
-#include <verilated.h>
-#include <verilated_vcd_c.h>
+#include "Vtop_module.h"
+#include "verilated.h"
+#include "verilated_vcd_c.h" // For waveform generation
 #include <iostream>
 #include <vector>
-#include "Veth_parser.h"
+#include <cstdint>
 
-void tick(Veth_parser* dut, VerilatedVcdC* trace, vluint64_t& sim_time) {
+vluint64_t sim_time = 0;
+double sc_time_stamp() {
+    return sim_time;
+}
+
+void tick(Vtop_module* dut, VerilatedVcdC* trace) {
     dut->clk = 0;
     dut->eval();
     if (trace) trace->dump(sim_time++);
-
     dut->clk = 1;
     dut->eval();
     if (trace) trace->dump(sim_time++);
 }
 
-void send_byte(Veth_parser* dut, VerilatedVcdC* trace, vluint64_t& sim_time, uint8_t data, bool last) {
-
+void send_byte(Vtop_module* dut, VerilatedVcdC* trace, uint8_t data, bool last) {
     while (dut->s_axis_tready == 0) {
-        tick(dut, trace, sim_time);
+        tick(dut, trace);
     }
-
+    
     dut->s_axis_tdata = data;
     dut->s_axis_tvalid = 1;
     dut->s_axis_tlast = last;
 
-    tick(dut, trace, sim_time);
+    tick(dut, trace);
 
     dut->s_axis_tvalid = 0;
     dut->s_axis_tlast = 0;
 }
 
+void send_frame(Vtop_module* dut, VerilatedVcdC* trace, const std::vector<uint8_t>& frame) {
+    std::cout << "\n--- Sending New Frame (" << frame.size() << " bytes) ---" << std::endl;
+    for (size_t i = 0; i < frame.size(); ++i) {
+        bool is_last = (i == frame.size() - 1);
+        send_byte(dut, trace, frame[i], is_last);
+    }
+    std::cout << "--- Frame Sent ---" << std::endl;
+}
+
+
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
 
-    Veth_parser* dut = new Veth_parser;
+    Vtop_module* dut = new Vtop_module;
 
     Verilated::traceEverOn(true);
     VerilatedVcdC* trace = new VerilatedVcdC;
     dut->trace(trace, 99);
     trace->open("waveform.vcd");
 
-    vluint64_t sim_time = 0;
+    // --- Initial State ---
     dut->rst = 1;
     dut->s_axis_tvalid = 0;
     dut->s_axis_tlast = 0;
-    dut->m_axis_tready = 1;
+    dut->m_axis_tready = 1; // Assume downstream is always ready
 
     // --- Reset Sequence ---
     std::cout << "Starting reset..." << std::endl;
-    tick(dut, trace, sim_time);
-    tick(dut, trace, sim_time);
+    tick(dut, trace);
+    tick(dut, trace);
     dut->rst = 0;
-    tick(dut, trace, sim_time);
+    tick(dut, trace);
     std::cout << "Reset complete." << std::endl;
 
-    // --- Ethernet Frame Data ---
+    // --- Test Data Construction ---
+    // We will fragment a larger UDP packet.
+    // Let's create two IP fragments.
 
-    std::vector<uint8_t> frame = {
-        // Destination MAC
-        0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
-        // Source MAC
-        0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF,
-        // EtherType (e.g., 0x0800 for IPv4)
-        0x08, 0x00,
-        // Payload (64 bytes total minimum frame size, including MACs/EtherType)
-        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
-        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
-        0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B,
-        // Frame Check Sequence (FCS) - dummy value for now
-        0xDE, 0xAD, 0xBE, 0xEF
+    // --- Fragment 1 ---
+    std::vector<uint8_t> ip_fragment_1 = {
+        // --- IP Header (20 bytes) ---
+        0x45, 0x00,             // Version=4, IHL=5, ToS=0
+        0x00, 0x24,             // Total Length = 36 bytes (20 IP Hdr + 16 Payload)
+        0xAB, 0xCD,             // Identification: 0xABCD (Must be same for all fragments)
+        0x20, 0x00,             // Flags=0b001 (More Fragments), Fragment Offset=0
+        0x40,                   // TTL = 64
+        0x11,                   // Protocol = 17 (UDP)
+        0xBE, 0xEF,             // Header Checksum (dummy value)
+        0xC0, 0xA8, 0x01, 0x0A, // Source IP: 192.168.1.10
+        0xC0, 0xA8, 0x01, 0x14, // Destination IP: 192.168.1.20
+        // --- IP Payload (16 bytes) ---
+        // This would be the UDP header and start of UDP payload
+        'T', 'h', 'i', 's', ' ', 'i', 's', ' ', 
+        't', 'h', 'e', ' ', 'f', 'i', 'r', 's'
     };
 
+    // --- Fragment 2 ---
+    std::vector<uint8_t> ip_fragment_2 = {
+        // --- IP Header (20 bytes) ---
+        0x45, 0x00,             // Version=4, IHL=5, ToS=0
+        0x00, 0x1B,             // Total Length = 27 bytes (20 IP Hdr + 7 Payload)
+        0xAB, 0xCD,             // Identification: 0xABCD (Same as Fragment 1)
+        0x00, 0x02,             // Flags=0b000 (Last Fragment), Fragment Offset=2 (16 bytes / 8)
+        0x40,                   // TTL = 64
+        0x11,                   // Protocol = 17 (UDP)
+        0xCA, 0xFE,             // Header Checksum (dummy value)
+        0xC0, 0xA8, 0x01, 0x0A, // Source IP: 192.168.1.10
+        0xC0, 0xA8, 0x01, 0x14, // Destination IP: 192.168.1.20
+        // --- IP Payload (7 bytes) ---
+        't', ' ', 'p', 'a', 'c', 'k', 't'
+    };
 
-    // --- Send the Frame ---
-    std::cout << "Sending Ethernet frame..." << std::endl;
-    for (size_t i = 0; i < frame.size(); ++i) {
-        bool is_last = (i == frame.size() - 1);
-        send_byte(dut, trace, sim_time, frame[i], is_last);
-    }
-    std::cout << "Frame sent." << std::endl;
+    // --- Fragment 3 ---
+    std::vector<uint8_t> ip_fragment_3 = {
+        // --- IP Header (20 bytes) ---
+        0x45, 0x00,             // Version=4, IHL=5, ToS=0
+        0x00, 0x23,             // Total Length = 35 bytes (20 IP Hdr + 15 Payload)
+        0xAB, 0xCE,             // Identification: 0xABCD (Must be same for all fragments)
+        0x20, 0x00,             // Flags=0b001 (More Fragments), Fragment Offset=0
+        0x40,                   // TTL = 64
+        0x06,                   // Protocol = 6 (TCP)
+        0xBE, 0xEF,             // Header Checksum (dummy value)
+        0xC0, 0xA8, 0x01, 0x0A, // Source IP: 192.168.1.10
+        0xC0, 0xA8, 0x01, 0x14, // Destination IP: 192.168.1.20
+        // --- IP Payload (16 bytes) ---
+        // This would be the UDP header and start of UDP payload
+        'T', 'h', 'i', 's', ' ', 'i', 's', ' ', 
+        'N', 'O', 'T', ' ', 'U', 'D', 'P'
+    };
+
+    // --- Encapsulate fragments into Ethernet frames ---
+    std::vector<uint8_t> ethernet_frame_1;
+    ethernet_frame_1.insert(ethernet_frame_1.end(), {0x11, 0x22, 0x33, 0x44, 0x55, 0x66}); // Dest MAC
+    ethernet_frame_1.insert(ethernet_frame_1.end(), {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}); // Src MAC
+    ethernet_frame_1.insert(ethernet_frame_1.end(), {0x08, 0x00}); // EtherType IPv4
+    ethernet_frame_1.insert(ethernet_frame_1.end(), ip_fragment_1.begin(), ip_fragment_1.end()); // IP Fragment 1
+
+    std::vector<uint8_t> ethernet_frame_2;
+    ethernet_frame_2.insert(ethernet_frame_2.end(), {0x11, 0x22, 0x33, 0x44, 0x55, 0x66}); // Dest MAC
+    ethernet_frame_2.insert(ethernet_frame_2.end(), {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}); // Src MAC
+    ethernet_frame_2.insert(ethernet_frame_2.end(), {0x08, 0x00}); // EtherType IPv4
+    ethernet_frame_2.insert(ethernet_frame_2.end(), ip_fragment_2.begin(), ip_fragment_2.end()); // IP Fragment 2
+
+    std::vector<uint8_t> ethernet_frame_3;
+    ethernet_frame_3.insert(ethernet_frame_3.end(), {0x11, 0x22, 0x33, 0x44, 0x55, 0x66}); // Dest MAC
+    ethernet_frame_3.insert(ethernet_frame_3.end(), {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}); // Src MAC
+    ethernet_frame_3.insert(ethernet_frame_3.end(), {0x08, 0x00}); // EtherType IPv4
+    ethernet_frame_3.insert(ethernet_frame_3.end(), ip_fragment_3.begin(), ip_fragment_3.end()); // IP Fragment 3
+
+    // --- Send the Frames ---
+    send_frame(dut, trace, ethernet_frame_1);
+    
+    // Inter-packet gap
+    for (int i=0; i<10; ++i) tick(dut, trace);
+
+    send_frame(dut, trace, ethernet_frame_2);
+
+    // Inter-packet gap
+    for (int i=0; i<10; ++i) tick(dut, trace);
+
+    send_frame(dut, trace, ethernet_frame_3);
 
     // --- Run for a few more cycles to observe idle state ---
     for (int i = 0; i < 20; ++i) {
-        tick(dut, trace, sim_time);
+        tick(dut, trace);
     }
 
     // --- Cleanup ---
     trace->close();
     delete dut;
-    delete trace;
 
     std::cout << "Simulation finished." << std::endl;
     return 0;

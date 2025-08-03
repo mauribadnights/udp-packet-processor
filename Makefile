@@ -11,8 +11,12 @@ WAVE_VIEWER = surfer
 RTL_DIR = rtl
 SIM_DIR = sim
 
-VERILOG_FILES = $(RTL_DIR)/eth_parser.v
-TOP_MODULE = eth_parser
+VERILOG_FILES = \
+	$(RTL_DIR)/eth_parser.v \
+	$(RTL_DIR)/ip_parser.v \
+	$(RTL_DIR)/top_module.v
+	
+TOP_MODULE = top_module
 CPP_SOURCES = $(SIM_DIR)/testbench.cpp
 SIM_EXEC = V$(TOP_MODULE)
 
