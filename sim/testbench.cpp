@@ -1,6 +1,6 @@
 #include "Vtop_module.h"
 #include "verilated.h"
-#include "verilated_vcd_c.h" // For waveform generation
+#include "verilated_vcd_c.h"
 #include <iostream>
 #include <vector>
 #include <cstdint>
@@ -35,7 +35,7 @@ void send_byte(Vtop_module* dut, VerilatedVcdC* trace, uint8_t data, bool last) 
 }
 
 void send_frame(Vtop_module* dut, VerilatedVcdC* trace, const std::vector<uint8_t>& frame) {
-    std::cout << "\n--- Sending New Frame (" << frame.size() << " bytes) ---" << std::endl;
+    std::cout << "\n--- Sending NYSE OpenBook Frame (" << frame.size() << " bytes) ---" << std::endl;
     for (size_t i = 0; i < frame.size(); ++i) {
         bool is_last = (i == frame.size() - 1);
         send_byte(dut, trace, frame[i], is_last);
@@ -58,7 +58,7 @@ int main(int argc, char** argv) {
     dut->rst = 1;
     dut->s_axis_tvalid = 0;
     dut->s_axis_tlast = 0;
-    dut->m_axis_tready = 1; // Assume downstream is always ready
+    dut->m_axis_tready = 1;
 
     // --- Reset Sequence ---
     std::cout << "Starting reset..." << std::endl;
@@ -68,93 +68,49 @@ int main(int argc, char** argv) {
     tick(dut, trace);
     std::cout << "Reset complete." << std::endl;
 
-    // --- Test Data Construction ---
-    // We will fragment a larger UDP packet.
-    // Let's create two IP fragments.
+    // UDP Payload
+    std::vector<uint8_t> udp_payload = {
+        0x01, 0x01, 0xEA, 0x00,
+        0x00, 0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x27, 0x10,
+        0x00, 0x00, 0x00, 0x64,
+        0x00, 0x00, 0x00, 0x0A,
+        0x01, 0x00, 0x00, 0x00
+    };
 
-    // --- Fragment 1 ---
-    std::vector<uint8_t> ip_fragment_1 = {
-        // --- IP Header (20 bytes) ---
+    // UDP Header (8 bytes)
+    std::vector<uint8_t> udp_header = {
+        0xD3, 0x98,             // Source Port (e.g., 54168)
+        0x61, 0xD4,             // Dest Port (e.g., 25044)
+        0x00, (uint8_t)(8 + udp_payload.size()), // Length = UDP Hdr + Payload
+        0xBE, 0xEF              // Checksum (dummy)
+    };
+
+    // IP Header (20 bytes)
+    std::vector<uint8_t> ip_header = {
         0x45, 0x00,             // Version=4, IHL=5, ToS=0
-        0x00, 0x24,             // Total Length = 36 bytes (20 IP Hdr + 16 Payload)
-        0xAB, 0xCD,             // Identification: 0xABCD (Must be same for all fragments)
-        0x20, 0x00,             // Flags=0b001 (More Fragments), Fragment Offset=0
+        0x00, (uint8_t)(20 + 8 + udp_payload.size()), // Total Length = IP Hdr + UDP Hdr + Payload
+        0x12, 0x34,             // Identification: 0x1234
+        0x00, 0x00,             // Flags=0, Fragment Offset=0 (No Fragmentation!)
         0x40,                   // TTL = 64
         0x11,                   // Protocol = 17 (UDP)
-        0xBE, 0xEF,             // Header Checksum (dummy value)
-        0xC0, 0xA8, 0x01, 0x0A, // Source IP: 192.168.1.10
-        0xC0, 0xA8, 0x01, 0x14, // Destination IP: 192.168.1.20
-        // --- IP Payload (16 bytes) ---
-        // This would be the UDP header and start of UDP payload
-        'T', 'h', 'i', 's', ' ', 'i', 's', ' ', 
-        't', 'h', 'e', ' ', 'f', 'i', 'r', 's'
+        0xCA, 0xFE,             // Header Checksum (dummy)
+        0xAC, 0x10, 0x0A, 0x01, // Source IP: 172.16.10.1
+        0xE0, 0x00, 0x01, 0x30  // Dest IP: 224.0.1.48 (Example Multicast)
     };
 
-    // --- Fragment 2 ---
-    std::vector<uint8_t> ip_fragment_2 = {
-        // --- IP Header (20 bytes) ---
-        0x45, 0x00,             // Version=4, IHL=5, ToS=0
-        0x00, 0x1B,             // Total Length = 27 bytes (20 IP Hdr + 7 Payload)
-        0xAB, 0xCD,             // Identification: 0xABCD (Same as Fragment 1)
-        0x00, 0x02,             // Flags=0b000 (Last Fragment), Fragment Offset=2 (16 bytes / 8)
-        0x40,                   // TTL = 64
-        0x11,                   // Protocol = 17 (UDP)
-        0xCA, 0xFE,             // Header Checksum (dummy value)
-        0xC0, 0xA8, 0x01, 0x0A, // Source IP: 192.168.1.10
-        0xC0, 0xA8, 0x01, 0x14, // Destination IP: 192.168.1.20
-        // --- IP Payload (7 bytes) ---
-        't', ' ', 'p', 'a', 'c', 'k', 't'
-    };
+    // Final Ethernet Frame
+    std::vector<uint8_t> ethernet_frame;
+    ethernet_frame.insert(ethernet_frame.end(), {0x01, 0x00, 0x5E, 0x00, 0x01, 0x30}); // Dest MAC
+    ethernet_frame.insert(ethernet_frame.end(), {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}); // Src MAC
+    ethernet_frame.insert(ethernet_frame.end(), {0x08, 0x00});                         // EtherType IPv4
+    ethernet_frame.insert(ethernet_frame.end(), ip_header.begin(), ip_header.end());
+    ethernet_frame.insert(ethernet_frame.end(), udp_header.begin(), udp_header.end());
+    ethernet_frame.insert(ethernet_frame.end(), udp_payload.begin(), udp_payload.end());
 
-    // --- Fragment 3 ---
-    std::vector<uint8_t> ip_fragment_3 = {
-        // --- IP Header (20 bytes) ---
-        0x45, 0x00,             // Version=4, IHL=5, ToS=0
-        0x00, 0x23,             // Total Length = 35 bytes (20 IP Hdr + 15 Payload)
-        0xAB, 0xCE,             // Identification: 0xABCD (Must be same for all fragments)
-        0x20, 0x00,             // Flags=0b001 (More Fragments), Fragment Offset=0
-        0x40,                   // TTL = 64
-        0x06,                   // Protocol = 6 (TCP)
-        0xBE, 0xEF,             // Header Checksum (dummy value)
-        0xC0, 0xA8, 0x01, 0x0A, // Source IP: 192.168.1.10
-        0xC0, 0xA8, 0x01, 0x14, // Destination IP: 192.168.1.20
-        // --- IP Payload (16 bytes) ---
-        // This would be the UDP header and start of UDP payload
-        'T', 'h', 'i', 's', ' ', 'i', 's', ' ', 
-        'N', 'O', 'T', ' ', 'U', 'D', 'P'
-    };
-
-    // --- Encapsulate fragments into Ethernet frames ---
-    std::vector<uint8_t> ethernet_frame_1;
-    ethernet_frame_1.insert(ethernet_frame_1.end(), {0x11, 0x22, 0x33, 0x44, 0x55, 0x66}); // Dest MAC
-    ethernet_frame_1.insert(ethernet_frame_1.end(), {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}); // Src MAC
-    ethernet_frame_1.insert(ethernet_frame_1.end(), {0x08, 0x00}); // EtherType IPv4
-    ethernet_frame_1.insert(ethernet_frame_1.end(), ip_fragment_1.begin(), ip_fragment_1.end()); // IP Fragment 1
-
-    std::vector<uint8_t> ethernet_frame_2;
-    ethernet_frame_2.insert(ethernet_frame_2.end(), {0x11, 0x22, 0x33, 0x44, 0x55, 0x66}); // Dest MAC
-    ethernet_frame_2.insert(ethernet_frame_2.end(), {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}); // Src MAC
-    ethernet_frame_2.insert(ethernet_frame_2.end(), {0x08, 0x00}); // EtherType IPv4
-    ethernet_frame_2.insert(ethernet_frame_2.end(), ip_fragment_2.begin(), ip_fragment_2.end()); // IP Fragment 2
-
-    std::vector<uint8_t> ethernet_frame_3;
-    ethernet_frame_3.insert(ethernet_frame_3.end(), {0x11, 0x22, 0x33, 0x44, 0x55, 0x66}); // Dest MAC
-    ethernet_frame_3.insert(ethernet_frame_3.end(), {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}); // Src MAC
-    ethernet_frame_3.insert(ethernet_frame_3.end(), {0x08, 0x00}); // EtherType IPv4
-    ethernet_frame_3.insert(ethernet_frame_3.end(), ip_fragment_3.begin(), ip_fragment_3.end()); // IP Fragment 3
-
-    // --- Send the Frames ---
-    send_frame(dut, trace, ethernet_frame_1);
-    
-    // Inter-packet gap
-    for (int i=0; i<10; ++i) tick(dut, trace);
-
-    send_frame(dut, trace, ethernet_frame_2);
-
-    // Inter-packet gap
-    for (int i=0; i<10; ++i) tick(dut, trace);
-
-    send_frame(dut, trace, ethernet_frame_3);
+    // --- Send the Frame ---
+    send_frame(dut, trace, ethernet_frame);
 
     // --- Run for a few more cycles to observe idle state ---
     for (int i = 0; i < 20; ++i) {

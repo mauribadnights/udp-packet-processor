@@ -23,11 +23,9 @@ module ip_parser #(
   // DEFINE OUR STATES
   parameter S_IDLE = 3'd0; 
   parameter S_PARSE_HEADER = 3'd1;
-  parameter S_STREAM_PAYLOAD_FRAG = 3'd2;
-  parameter S_STREAM_PAYLOAD_LAST = 3'd3;
+  parameter S_STREAM_PAYLOAD = 3'd2;
   parameter S_DROP = 3'd4;
-  parameter S_FINISH_FRAG = 3'd5;
-  parameter S_FINISH_LAST = 3'd6;
+  parameter S_FINISH = 3'd5;
 
   // SOME OTHER PARAMETERS
   parameter HEADER_LEN = 20;
@@ -67,28 +65,21 @@ module ip_parser #(
       S_IDLE: if (s_axis_tvalid == 1'b1) next_state = S_PARSE_HEADER;
       S_PARSE_HEADER: begin
         if (byte_counter == HEADER_LEN-1) begin
-          if (protocol != 17) begin
+          if (protocol != 17 || mf == 1'b1) begin
             next_state = S_DROP;
-          end else begin
-            if (mf == 1'b1) next_state = S_STREAM_PAYLOAD_FRAG;
-            if (mf == 1'b0) next_state = S_STREAM_PAYLOAD_LAST;
-          end
+          end else next_state = S_STREAM_PAYLOAD;
         end
       end
-      S_STREAM_PAYLOAD_FRAG: if (s_axis_tvalid && s_axis_tlast && s_axis_tready) next_state = S_FINISH_FRAG;
-      S_STREAM_PAYLOAD_LAST: if (s_axis_tvalid && s_axis_tlast && s_axis_tready) next_state = S_FINISH_LAST;
+      S_STREAM_PAYLOAD: if (s_axis_tvalid && s_axis_tlast && s_axis_tready) next_state = S_FINISH;
       S_DROP: if (s_axis_tvalid && s_axis_tlast && s_axis_tready) next_state = S_IDLE;
-      S_FINISH_FRAG: next_state = S_IDLE;
-      S_FINISH_LAST: next_state = S_IDLE;
+      S_FINISH: next_state = S_IDLE;
       default: next_state = S_IDLE;
     endcase
   end
 
   wire valid_states = 
-    (curr_state == S_STREAM_PAYLOAD_FRAG) || 
-    (curr_state == S_STREAM_PAYLOAD_LAST) || 
-    (curr_state == S_FINISH_FRAG) || 
-    (curr_state == S_FINISH_LAST);
+    (curr_state == S_STREAM_PAYLOAD) ||
+    (curr_state == S_FINISH);
 
   assign reset_counter = (curr_state == S_IDLE) ? 1 : 0;
 
