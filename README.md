@@ -14,21 +14,22 @@ However, if you want to see a super minimalist version of just the Ethernet/IP/U
 
 ## Where I am right now
 
-The `eth_parser` module is fresh out of the oven, so far it only works DATA_WIDTH=8(bits) but I do plan on making it more versatile in the soon future.
+The very basic functionality for all modules is done. For it only works DATA_WIDTH=8(bits) but I do plan on making it more versatile in the future. It is not the most robust design either (yet), since it doesn't handle runt packets (if `s_axis_tlast` arrives before the header is parsed, the cookie hits the fan). But for now:
 
   * It correctly uses an AXI-Stream interface.
-  * It sniff sniffs the first 14 bytes of an Ethernet header.
-  * It figures out if the packet is for us (`TARGET_MAC_ADDR`) or for everyone (`BROADCAST_MAC_ADDR`).
+  * It parses the corresponding header.
+  * It streams the payload once the headers have been parsed and the conditions have been met.
   * It should handle backpressure, so it won't drop packets when things downstream get busy.
 
 ## How does it work?
 
-It's all built around a little four-state machine just like I learnt in uni:
+All 3 moduels are built around a little state machine just like I learnt in uni:
 
 1.  **S\_IDLE:** Sits around waiting for a packet to show up.
 2.  **S\_PARSE\_HEADER:** Snaps up the 14-byte header.
 3.  **S\_STREAM\_PAYLOAD:** Lets the rest of the packet flow through with zero delay.
-4.  **S\_FINISH:** A special one-cycle state to make sure the end of the packet (`tlast`) is handled perfectly, even if the receiver is stalled.
+4.  **S\_DROP:** This one only appears in the IP and UDP parsers, but it essentially just waits there until packet is done, then heads back to `S\_IDLE.`
+5.  **S\_FINISH:** A special one-cycle state to make sure the end of the packet (`tlast`) is handled perfectly, even if the receiver is stalled.
 
 ## How to run this thing
 
@@ -42,13 +43,13 @@ make run
 make clean
 ```
 
-## Future
+## Future steps (in no particular order)
 
 ### In the oven right now
+1. Synthesise, implementation and STA
 
-1.  `ip_parser` module.
+### Fresh dough waiting in the fridge (might go bad)
+2. Improve robustness by adding support for runt packets
+3. Redesign to allow for more `DATA_WIDTH`
 
-### Fresh dough waiting in the fridge
-
-2.  `udp_parser` module.
-3.  Actually synthesize the thingy.
+I am not sure when I will implement these last 2 functionalities. I have learnt a lot about these protocols as I developed this which was the main goal, and maybe I will start a new project on a related topic but with a more useful outcome.
